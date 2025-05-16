@@ -7,6 +7,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.0.1-alpha.2](https://github.com/AhaLabs/scaffold-stellar/compare/stellar-registry-cli-v0.0.1-alpha.1...stellar-registry-cli-v0.0.1-alpha.2) - 2025-05-16
+
+### Added
+
+- initial deploy work ([#57](https://github.com/AhaLabs/scaffold-stellar/pull/57))
+- deterministically derive contract id ([#52](https://github.com/AhaLabs/scaffold-stellar/pull/52))
+
 ## [0.0.1-alpha.1](https://github.com/AhaLabs/scaffold-stellar/compare/stellar-registry-cli-v0.0.1-alpha...stellar-registry-cli-v0.0.1-alpha.1) - 2025-05-13
 
 ### Other
