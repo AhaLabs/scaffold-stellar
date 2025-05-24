@@ -3,11 +3,10 @@ use std::{ffi::OsString, path::PathBuf};
 use clap::Parser;
 
 use soroban_sdk::xdr::{ScMetaEntry, ScMetaV0};
+pub use soroban_spec_tools::contract as contract_spec;
 use stellar_cli::{commands::contract::invoke, config, fee};
 
-pub use soroban_spec_tools::contract as contract_spec;
-
-use crate::testnet::invoke_registry;
+use crate::contract::NetworkContract;
 
 #[derive(Parser, Debug, Clone)]
 pub struct Cmd {
@@ -69,24 +68,21 @@ impl Cmd {
                 }
             }
         }));
-        // Use the provided author or the default keypair
-        let author = self.author.clone().unwrap_or_else(|| {
-            self.config
-                .key_pair()
-                .map(|key| {
-                    stellar_strkey::ed25519::PublicKey(key.verifying_key().to_bytes()).to_string()
-                })
-                .unwrap_or_default()
-        });
+        // Use the provided author or the source account
+        let author = if let Some(author) = self.author.clone() {
+            author
+        } else {
+            self.config.source_account().await?.to_string()
+        };
         args.push(format!("--author={author}"));
 
         // Pass config and fee to invoke_registry
-        invoke_registry(
-            &args.iter().map(String::as_str).collect::<Vec<_>>(),
-            &self.config,
-            &self.fee,
-        )
-        .await?;
+        self.config
+            .invoke_registry(
+                &args.iter().map(String::as_str).collect::<Vec<_>>(),
+                Some(&self.fee),
+            )
+            .await?;
 
         Ok(())
     }
