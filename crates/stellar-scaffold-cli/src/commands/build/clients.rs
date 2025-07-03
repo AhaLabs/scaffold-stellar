@@ -253,7 +253,26 @@ impl Args {
         config_dir.save_contract_id(&passphrase, contract_id, name)
     }
 
-    fn write_contract_template(self, name: &str, contract_id: &str) -> Result<(), Error> {
+    fn write_contract_template(&self, name: &str, template: &str) -> Result<(), Error> {
+        let workspace_root = self
+            .workspace_root
+            .as_ref()
+            .expect("workspace_root not set");
+        let contracts_dir = workspace_root.join("src/contracts");
+        std::fs::create_dir_all(&contracts_dir)?;
+        let path = contracts_dir.join(format!("{name}.ts"));
+        std::fs::write(path, template)?;
+        Ok(())
+    }
+
+    fn write_all_contract_templates(&self, templates: Vec<(String, String)>) -> Result<(), Error> {
+        for (name, template) in templates {
+            self.write_contract_template(&name, &template)?;
+        }
+        Ok(())
+    }
+
+    fn create_contract_template(&self, name: &str, contract_id: &str) -> Result<String, Error> {
         let allow_http =
             if self.clone().stellar_scaffold_env(ScaffoldEnv::Production) == "development" {
                 "\n  allowHttp: true,"
@@ -265,7 +284,7 @@ impl Args {
         let template = format!(
             r"import * as Client from '{name}';
 import {{ rpcUrl }} from './util';
-    
+
 export default new Client.Client({{
   networkPassphrase: '{network}',
   contractId: '{contract_id}',
@@ -274,30 +293,34 @@ export default new Client.Client({{
 }});
 "
         );
-        let workspace_root = self
-            .workspace_root
-            .as_ref()
-            .expect("workspace_root not set");
-        let path = workspace_root.join(format!("src/contracts/{name}.ts"));
-        std::fs::write(path, template)?;
-        Ok(())
+        Ok(template)
     }
 
-    async fn generate_contract_bindings(self, name: &str, contract_id: &str) -> Result<(), Error> {
+    async fn generate_contract_bindings(
+        &self,
+        name: &str,
+        contract_id: &str,
+    ) -> Result<String, Error> {
         eprintln!("🎭 binding {name:?} contract");
         let workspace_root = self
             .workspace_root
             .as_ref()
             .expect("workspace_root not set");
-        let output_dir = workspace_root.join(format!("packages/{name}"));
+        let final_output_dir = workspace_root.join(format!("packages/{name}"));
+
+        // Create a temporary directory for building the new client
+        let temp_dir = workspace_root.join(format!("packages/.temp_{name}_{}", std::process::id()));
+
+        // Ensure temp directory is clean if it exists
+        if temp_dir.exists() {
+            std::fs::remove_dir_all(&temp_dir)?;
+        }
+
         cli::contract::bindings::typescript::Cmd::parse_arg_vec(&[
             "--contract-id",
             contract_id,
             "--output-dir",
-            output_dir
-                .to_str()
-                .expect("we do not support non-utf8 paths"),
-            "--overwrite",
+            temp_dir.to_str().expect("we do not support non-utf8 paths"),
             "--config-dir",
             workspace_root
                 .to_str()
@@ -306,21 +329,20 @@ export default new Client.Client({{
         .run()
         .await?;
 
-        eprintln!("🍽️ importing {name:?} contract");
-        self.write_contract_template(name, contract_id)?;
-
-        // Run `npm i` in the output directory
-        eprintln!("🔧 running 'npm install' in {output_dir:?}");
+        // Run `npm i` in the temp directory
+        eprintln!("🔧 running 'npm install' in {temp_dir:?}");
         let output = std::process::Command::new("npm")
-            .current_dir(&output_dir)
+            .current_dir(&temp_dir)
             .arg("install")
             .arg("--loglevel=error") // Reduce noise from warnings
             .arg("--no-workspaces") // fix issue where stellar sometimes isnt installed locally causing tsc to fail
             .output()?;
 
         if !output.status.success() {
+            // Clean up temp directory on failure
+            let _ = std::fs::remove_dir_all(&temp_dir);
             return Err(Error::NpmCommandFailure(
-                output_dir.clone(),
+                temp_dir.clone(),
                 format!(
                     "npm install failed with status: {:?}\nError: {}",
                     output.status.code(),
@@ -328,19 +350,21 @@ export default new Client.Client({{
                 ),
             ));
         }
-        eprintln!("✅ 'npm install' succeeded in {output_dir:?}");
+        eprintln!("✅ 'npm install' succeeded in {temp_dir:?}");
 
-        eprintln!("🔨 running 'npm run build' in {output_dir:?}");
+        eprintln!("🔨 running 'npm run build' in {temp_dir:?}");
         let output = std::process::Command::new("npm")
-            .current_dir(&output_dir)
+            .current_dir(&temp_dir)
             .arg("run")
             .arg("build")
             .arg("--loglevel=error") // Reduce noise from warnings
             .output()?;
 
         if !output.status.success() {
+            // Clean up temp directory on failure
+            let _ = std::fs::remove_dir_all(&temp_dir);
             return Err(Error::NpmCommandFailure(
-                output_dir.clone(),
+                temp_dir.clone(),
                 format!(
                     "npm run build failed with status: {:?}\nError: {}",
                     output.status.code(),
@@ -348,8 +372,29 @@ export default new Client.Client({{
                 ),
             ));
         }
-        eprintln!("✅ 'npm run build' succeeded in {output_dir:?}");
-        Ok(())
+        eprintln!("✅ 'npm run build' succeeded in {temp_dir:?}");
+
+        // Now atomically replace the old directory with the new one
+        if final_output_dir.exists() {
+            match std::fs::rename(&temp_dir, &final_output_dir) {
+                Ok(()) => {
+                    eprintln!("✅ Client {name:?} updated successfully");
+                }
+                Err(e) => {
+                    // Failed to move new directory, clean up temp directory
+                    let _ = std::fs::remove_dir_all(&temp_dir);
+                    return Err(Error::Io(e));
+                }
+            }
+        } else {
+            // No existing directory, just move temp to final location
+            std::fs::rename(&temp_dir, &final_output_dir)?;
+            eprintln!("✅ Client {name:?} created successfully");
+        }
+
+        // Return the contract template content instead of writing it immediately
+        let template = self.create_contract_template(name, contract_id)?;
+        Ok(template)
     }
 
     async fn handle_accounts(
@@ -498,6 +543,7 @@ export default new Client.Client({{
         self.validate_contract_names(contracts)?;
 
         let names = Self::maintain_user_ordering(&package_names, contracts);
+
         let mut results: Vec<(String, Result<(), String>)> = Vec::new();
 
         for name in names {
@@ -515,7 +561,7 @@ export default new Client.Client({{
                 .process_single_contract(&name, settings, network, &env)
                 .await
             {
-                Ok(()) => {
+                Ok(_) => {
                     eprintln!("✅ Successfully generated client for: {name}");
                     results.push((name, Ok(())));
                 }
@@ -582,7 +628,7 @@ export default new Client.Client({{
         settings: env_toml::Contract,
         network: &Network,
         env: &str,
-    ) -> Result<(), Error> {
+    ) -> Result<String, Error> {
         // First check if we have an ID in settings
         let contract_id = if let Some(id) = &settings.id {
             Contract::from_string(id).map_err(|_| Error::InvalidContractID(id.clone()))?
@@ -601,7 +647,10 @@ export default new Client.Client({{
                     .await?
                 {
                     eprintln!("✅ Contract {name:?} is up to date");
-                    return Ok(());
+                    let template = self
+                        .generate_contract_bindings(name, &existing_contract_id.to_string())
+                        .await?;
+                    return Ok(template);
                 }
                 eprintln!("🔄 Updating contract {name:?}");
             }
@@ -622,11 +671,11 @@ export default new Client.Client({{
             contract_id
         };
 
-        self.clone()
+        let template = self
             .generate_contract_bindings(name, &contract_id.to_string())
             .await?;
 
-        Ok(())
+        Ok(template)
     }
 
     async fn upload_contract_wasm(
@@ -810,5 +859,55 @@ export default new Client.Client({{
         }
         eprintln!("✅ After deploy script for {name:?} completed successfully");
         Ok(())
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use tempfile::TempDir;
+
+    #[test]
+    fn test_temp_directory_creation_and_cleanup() {
+        let temp_workspace = TempDir::new().unwrap();
+        let workspace_path = temp_workspace.path();
+
+        // Test that temp directory pattern is correct
+        let temp_dir = workspace_path.join(format!("packages/.temp_test_{}", std::process::id()));
+        assert!(temp_dir.to_string_lossy().contains(".temp_"));
+        assert!(temp_dir
+            .to_string_lossy()
+            .contains(&std::process::id().to_string()));
+    }
+
+    #[test]
+    fn test_create_contract_template() {
+        let temp_dir = tempfile::tempdir().expect("Failed to create temp directory");
+        let base_dir = temp_dir.path();
+
+        let args = Args {
+            env: Some(ScaffoldEnv::Development),
+            workspace_root: Some(base_dir.to_path_buf()),
+            out_dir: None,
+        };
+
+        // Mock environment variable
+        std::env::set_var("STELLAR_NETWORK_PASSPHRASE", "Test Network");
+
+        let result = args.create_contract_template("test_contract", "CTEST123");
+        assert!(result.is_ok());
+
+        let template = result.unwrap();
+        assert!(template.contains("test_contract"));
+        assert!(template.contains("CTEST123"));
+        assert!(template.contains("Test Network"));
+        assert!(template.contains("allowHttp: true"));
+
+        // Test that we can write it and it works
+        let result = args.write_contract_template("test_contract", &template);
+        assert!(result.is_ok());
+
+        let expected_path = base_dir.join("src/contracts/test_contract.ts");
+        assert!(expected_path.exists());
     }
 }
