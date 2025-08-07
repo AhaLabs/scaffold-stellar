@@ -32,7 +32,7 @@ impl std::fmt::Display for ScaffoldEnv {
 
 #[derive(clap::Args, Clone, Debug)]
 pub struct Args {
-    #[arg(env = "STELLAR_SCAFFOLD_ENV", value_enum)]
+    #[arg(env = "STELLAR_ENV", value_enum)]
     pub env: Option<ScaffoldEnv>,
     #[arg(skip)]
     pub workspace_root: Option<std::path::PathBuf>,

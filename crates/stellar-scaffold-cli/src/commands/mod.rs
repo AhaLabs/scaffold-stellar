@@ -71,7 +71,7 @@ pub enum Cmd {
     /// Version of the scaffold-stellar-cli
     Version(version::Cmd),
 
-    /// Build contracts, resolving dependencies in the correct order. If you have an `environments.toml` file, it will also follow its instructions to configure the environment set by the `STELLAR_SCAFFOLD_ENV` environment variable, turning your contracts into frontend packages (NPM dependencies).
+    /// Build contracts, resolving dependencies in the correct order. If you have an `environments.toml` file, it will also follow its instructions to configure the environment set by the `STELLAR_ENV` environment variable, turning your contracts into frontend packages (NPM dependencies).
     Build(build::Command),
 
     /// generate contracts
