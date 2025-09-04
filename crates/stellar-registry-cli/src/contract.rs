@@ -7,6 +7,8 @@ use stellar_cli::{
     xdr::{self, WriteXdr},
 };
 
+pub const REGISTRY_NAME: &str = "registry";
+
 pub trait NetworkContract {
     fn contract_id(&self) -> Result<stellar_strkey::Contract, config::Error>;
 
@@ -21,6 +23,11 @@ pub trait NetworkContract {
         slop: &[&str],
         fee: Option<&stellar_cli::fee::Args>,
         view_only: bool,
+    ) -> impl std::future::Future<Output = Result<String, invoke::Error>> + Send;
+
+    fn view_registry(
+        &self,
+        slop: &[&str],
     ) -> impl std::future::Future<Output = Result<String, invoke::Error>> + Send;
 
     fn rpc_client(&self) -> Result<rpc::Client, config::Error>;
@@ -49,6 +56,10 @@ impl NetworkContract for config::Args {
         view_only: bool,
     ) -> Result<String, invoke::Error> {
         invoke_registry(slop, self, fee, view_only).await
+    }
+
+    async fn view_registry(&self, slop: &[&str]) -> Result<String, invoke::Error> {
+        invoke_registry(slop, self, None, true).await
     }
 
     fn rpc_client(&self) -> Result<rpc::Client, config::Error> {
