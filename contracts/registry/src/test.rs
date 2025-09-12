@@ -96,7 +96,7 @@ fn returns_most_recent_version() {
 
 fn test_string(s: &str, result: bool) {
     assert!(
-        is_valid(&to_string(s)) == result,
+        is_valid(&to_string(s)).is_some() == result,
         "{s} should be {}valid",
         if result { "" } else { "in" }
     );
@@ -122,6 +122,29 @@ fn validate_names() {
     test_string("_ab", false);
     test_string("-ab", false);
     test_string("1ab", false);
+
+    assert_eq!(
+        is_valid(&to_string("ls_test")).unwrap(),
+        to_string("ls-test")
+    );
+    assert_eq!(
+        is_valid(&to_string("ls-test")).unwrap(),
+        to_string("ls-test")
+    );
+}
+
+#[test]
+fn publish_to_kebab_case() {
+    let (client, address) = &init();
+    let env = env();
+    let name = &to_string("hello_world");
+    // client.register_name(address, name);
+    let bytes = Bytes::from_slice(env, registry::WASM);
+    env.mock_all_auths();
+    let version = default_version();
+    client.publish(name, address, &bytes, &version);
+    let most_recent_version = client.current_version(&to_string("hello_world"));
+    assert_eq!(most_recent_version, to_string("0.0.0"));
 }
 
 #[test]
